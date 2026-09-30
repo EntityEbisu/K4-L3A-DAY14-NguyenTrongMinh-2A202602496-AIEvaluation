@@ -331,19 +331,74 @@ Rubric dùng **4 dimension có điểm số** (Correctness, Completeness, Eviden
 Chỉ làm sau khi hoàn thành 3.1–3.3. Chọn hai framework trong RAGAS, DeepEval
 và TruLens; chạy hoặc thiết kế một so sánh có cùng input dataset.
 
-| Tiêu chí | Framework 1: ____ | Framework 2: ____ |
+**Cơ sở so sánh:** tôi chọn **RAGAS** và **DeepEval**, và so sánh ở dạng *thiết kế
+và phân tích trên cùng một dataset* chứ không cài cả hai framework. Lý do nêu thẳng
+trong bảng dưới: `requirements.txt` của lab chỉ khai báo `openai`, `python-dotenv`,
+`pytest`, và `RUBRIC.md` §2.5 trừ điểm khi import thư viện không có trong đó. Cài thêm
+hai framework sẽ phải sửa `requirements.txt`, làm bài nộp lệch khỏi starter — nên tôi
+giữ nguyên dependency và mô tả phép so sánh trên **cùng 20 câu của
+`golden_dataset.json` + `artifacts/actual_answers.json`**, với cùng bộ input mà
+`template.py` đã dùng.
+
+| Tiêu chí | Framework 1: RAGAS | Framework 2: DeepEval |
 |---|---|---|
-| Setup complexity | | |
-| Metrics available | | |
-| CI/CD integration | | |
-| Kết quả trên cùng dataset | | |
-| Insight rút ra | | |
+| Setup complexity | Cần `ragas` + `datasets`; metric LLM đòi hỏi OpenAI key và gọi mạng cho mỗi câu. Tích hợp sẵn với cấu trúc dataset kiểu HF. | Cần `deepeval`; pytest-style test case (`assert_test`) nên chạy được ngay trong `pytest` mà không cần harness riêng. Metric LLM cũng cần provider. |
+| Metrics available | Rộng hơn cho RAG: `faithfulness`, `answer_relevancy`, `context_precision`, `context_recall`, `context_utilization`, `answer_correctness` (dùng judge LLM và embedding). | Rộng hơn cho QA/agent: `FaithfulnessMetric`, `AnswerRelevancyMetric`, `ContextualPrecisionMetric`, `GEval` (rubric tùy ý), `HallucinationMetric`. Mạnh về rubric động hơn RAGAS. |
+| CI/CD integration | Chạy offline được nếu dùng biến thể embedding/NLI thay vì LLM; bản LLM mặc định cần network nên CI dễ flaky. | `assert_test()` là một test case Python → tự động hóa CI/CD rất tự nhiên, threshold viết trong code. |
+| Kết quả trên cùng dataset | 5 metric cùng khái niệm với `template.py`, nhưng **khác công thức**: RAGAS tính faithfulness bằng NLI/LLM, nên một câu trả lời đúng-về-ngữ-nghĩa như E01 sẽ không bị trừ. | Tương tự, nhưng `GEval` cho phép đưa đúng rubric 1–5 của Exercise 3.3 vào, gần với cách chấm của tôi hơn. |
+| Insight rút ra | RAGAS cho metric tách bạch theo từng tầng RAG, hợp để chẩn đoán "lỗi ở retrieval hay generation" — cùng hướng với kết luận ở `reflection.md` §1. | DeepEval gộp thành một test pass/fail theo threshold, tiện cho quality gate hơn nhưng khó ghi ra *vì sao* một case fail. |
 
-- Scores có nhất quán không?
-- Framework nào strict hơn và vì sao?
-- Hai framework có tìm ra cùng failure cases không?
+- **Scores có nhất quán không?**
 
-> *Phân tích:*
+> **Không — và sự khác biệt nằm đúng ở chỗ quan trọng nhất.** Cả hai framework đều sẽ cho
+> Context Recall và Context Precision **cao** (trùng với 0.888 / 0.915 đã đo), vì ở
+> 18/20 câu evidence thật sự nằm trong retrieved set. Nhưng ở ba answer-side metric,
+> RAGAS/DeepEval sẽ cho điểm **cao hơn hẳn** kết quả hiện tại:
+> - E01: template cho 0.435 (fail, nhãn `hallucination`) trong khi câu trả lời đúng.
+>   RAGAS dùng NLI nên sẽ chấp nhận câu "contact OrbitTech support directly" là được
+>   hỗ trợ bởi chính sách → faithfulness cao.
+> - H01/A03: cả hai vẫn thấp, nhưng **vì lý do khác** — RAGAS cũng không bắt được lỗi
+>   "sai phiên bản chính sách" khi các con số 30/45 đều xuất hiện trong context.
+>
+> Nói cách khác: chuyển framework sẽ **nâng điểm ở E01 và A01** (false positive của
+> metric) mà **không sửa được H01/A03** (lỗi thật). Đây là lý do tôi không coi việc
+> đổi framework là một "cải thiện".
+
+- **Framework nào strict hơn và vì sao?**
+
+> **DeepEval strict hơn về mặt thể chế, RAGAS chặt hơn về mặt chẩn đoán.**
+> - DeepEval **strict hơn về mặt thể chế**: `assert_test()` + threshold viết trong code
+>   buộc mỗi metric phải có một ngưỡng rõ ràng, và CI fail ngay khi vượt ngưỡng. Điều
+>   này ép buộc phải trả lời câu hỏi khó mà bài này đã nêu ở `reflection.md` §5: metric
+>   nào **block**, metric nào chỉ **alert**. RAGAS trả về điểm thô, không ép bạn phải
+>   đặt ngưỡng.
+> - RAGAS **chặt hơn về mặt chẩn đoán**: tách `context_recall` / `context_precision` /
+>   `faithfulness` / `answer_relevancy` thành bốn metric độc lập, nên khi điểm tụt ta
+>   biết ngay tầng nào hỏng. DeepEval gộp thành một assert, mất thông tin này trừ khi
+>   bật verbose.
+>
+> Với OrbitTech, tôi chọn **DeepEval cho quality gate** (vì cưỡng chế ngưỡng) và
+> **RAGAS cho chẩn đoán** (vì tách tầng). Đây là bổ sung, không phải thay thế.
+
+- **Hai framework có tìm ra cùng failure cases không?**
+
+> **Có, nhưng không phải cùng tập — và chính sự khác biệt đó mới là insight.**
+> Cả hai đều chắc chắn tìm ra **M02**: `05_returns_and_exchanges.md` vắng mặt khỏi
+> retrieved set nên context recall thấp, đây là lỗi cấu trúc dữ liệu mà mọi framework
+> đều thấy.
+>
+> Nhưng với **H01/A03** (sai phiên bản chính sách), cả hai framework **dự kiến đều
+> bỏ lọt** — vì 30 ngày và 45 ngày đều có trong context, chỉ là áp sai version. Đó là
+> lỗi mà cả framework có LLM judge ở dạng câu hỏi trả lời đều dễ bỏ, và chỉ rubric có
+> quy tắc rõ *"mọi câu hỏi có ngày đặt hàng phải nêu version điều khiển trước khi đưa
+> con số"* mới bắt được — đó chính là lý do Exercise 3.3 phải viết rubric bám sát
+> domain thay vì dùng rubric chung.
+>
+> Ngược lại, A01 (từ chối đúng) thì hai framework sẽ cho điểm **cao**, còn template
+> chấm 0.087. Nói ngắn gọn: **framework quyết định cái gì bị phạt, không quyết định
+> cái gì đúng.** Với hệ thống chính sách có điều kiện như OrbitTech, phần lớn lỗi
+> nguy hiểm nằm ở loại mà framework không đo — nên rubric tự viết vẫn là phần không thể
+> thay thế.
 
 ### Exercise 3.5 — Retrieval Reranking (Bonus +5)
 
@@ -356,22 +411,64 @@ thay đổi Context Recall hay không.
 4. Rerank cùng tập chunks, không thêm hoặc xóa chunk.
 5. Tính lại hai metrics và giải thích kết quả.
 
+**Cách chọn 5 case:** 5 Easy đầu tiên (E01–E05) cho delta gần như bằng 0, vì BM25 đã
+xếp đúng chunk liên quan ở vị trí đầu. Để đo reranking có tác dụng không, tôi chọn 5
+case có **Context Precision thấp nhất** trong lần chạy thật (H02 0.679, H04 0.700,
+M06 0.950, M05 0.867, E05 0.867). Script đo dùng `assert sorted(before) == sorted(after)`
+để chứng minh reranking **không** thay đổi tập chunk.
+
 | ID | Recall before | Recall after | Precision before | Precision after | Delta Precision |
 |---|---:|---:|---:|---:|---:|
-| | | | | | |
-| | | | | | |
-| | | | | | |
-| | | | | | |
-| | | | | | |
-| **Avg** | | | | | |
+| H02 | 0.879 | 0.879 | 0.679 | 0.679 | +0.000 |
+| H04 | 0.938 | 0.938 | 0.700 | 0.917 | +0.217 |
+| M06 | 0.838 | 0.838 | 0.950 | 1.000 | +0.050 |
+| M05 | 1.000 | 1.000 | 0.867 | 0.867 | +0.000 |
+| E05 | 1.000 | 1.000 | 0.867 | 0.917 | +0.050 |
+| **Avg** | **0.931** | **0.931** | **0.812** | **0.876** | **+0.063** |
+
+*(Bộ Easy E01–E05 đo thêm: avg precision 0.973 → 0.983, delta +0.010; 4/5 case không
+đổi vì chunk đúng vốn đã ở vị trí 1.)*
+
+**Kết quả:** 3/5 case tăng precision, **0 case giảm**, trung bình +0.063. Recall
+giữ nguyên tuyệt đối ở cả 5 case (chênh lệch < 1e-9).
 
 **Tại sao Recall dự kiến không đổi?**
 
-> *Câu trả lời:*
+> Vì `evaluate_context_recall()` đo trên **union của các retrieved chunks**:
+> nó gom token của mọi chunk thành một tập rồi so với expected. Union là phép toán
+> **không phụ thuộc thứ tự**, nên đảo thứ tự các phần tử không thể làm thay đổi tập
+> union, và do đó không thể đổi recall. Đây là lý do thuật toán, không phải điều tình
+> cờ — kết quả đo trên 5 case ở trên xác nhận đúng như vậy (recall before = recall
+> after ở từng dòng).
+>
+> Ngược lại, Context Precision là **rank-aware**: `evaluate_context_precision()`
+> cộng dồn `Precision@k` theo thứ tự rank, nên một chunk relevant bị đẩy xuống
+> dưới sẽ giảm điểm. Reranking sửa đúng điều đó và **không** sửa được recall. Đây
+> chính là lý do trong §3 của `reflection.md` tôi nói Context Recall không nên dùng làm
+> quality gate: nó thuộc loại "không sửa được bằng reranking".
 
 **Khi nào reranking không đủ và cần sửa retriever/query/chunking?**
 
-> *Câu trả lời:*
+> Reranking chỉ dùng lại **tập chunk đã có**, nên nó chữa được đúng một loại lỗi:
+> **evidence có trong tập nhưng bị xếp sai thứ tự**. Ba tình huống nó không giải quyết
+> được, tất cả đều có bằng chứng ngay trong lần chạy này:
+>
+> 1. **Evidence vắng mặt hoàn toàn.** M02 có recall 0.533 vì
+>    `05_returns_and_exchanges.md` không nằm trong 5 chunk. Rerank 5 chunk đó sẽ vẫn
+>    không có tài liệu đổi trả — cần sửa **retriever** (tăng `top_k`, diversify theo
+>    chủ đề) hoặc **chunking** (tách theo mục tiêu chính sách thay vì theo đoạn văn).
+> 2. **Truy vấn sai từ khóa.** A01 hỏi về chẩn đoán y tế, ngoài corpus; không retriever
+>    nào tìm ra được đoạn "medical diagnosis là ngoài phạm vi". Cần sửa ở tầng
+>    **intent/scope detection** trước retrieval, không phải ở reranking.
+> 3. **Câu hỏi tự mang đáp án sai điều kiện.** H01 và A03 đều có recall ≥ 0.52 và
+>    precision cao — evidence **đã có** trong context — nhưng mô hình vẫn chọn nhầm
+>    phiên bản chính sách. Ở đây ngay cả một cross-encoder mạnh cũng không cứu được nếu
+>    bản thân truy vấn ép mô hình xác nhận tiền đề sai; cần sửa **prompt và mô hình**.
+>
+> Tóm lại: reranking là sửa **ranking**, nên dùng cho Context Precision. Nó vô dụng với
+> Context Recall thấp (thiếu evidence) và với lỗi suy luận (generation). Đo Recall
+> trước khi quyết định rerank — nếu Recall đã thấp thì đó là vấn đề retrieval, không
+> phải ranking.
 
 ---
 
@@ -385,11 +482,30 @@ Hoàn thành `reflection.md` bằng kết quả thật từ Exercise 3.2.
 
 Hoàn thành kiểm tra cuối trong khoảng 16:50–17:00.
 
-- [ ] Tất cả required tests pass.
-- [ ] `golden_dataset.json` validate thành công.
-- [ ] Exercise 3.1 hoàn thành trong file JSON và bảng kết quả phía trên.
-- [ ] Exercise 3.2 có năm metrics, aggregate report và ba cases thấp nhất.
-- [ ] Exercise 3.3 có rubric 1–5 và bias controls.
-- [ ] `reflection.md` có ba failure analyses và regression strategy.
-- [ ] Đã copy `template.py` thành `solution/solution.py`.
-- [ ] Exercise 3.4 và 3.5 chỉ làm nếu chọn bonus.
+- [x] Tất cả required tests pass — `pytest tests/ -v` → **42 passed** (41 required + 1 bonus reranking), 0 failed.
+- [x] `golden_dataset.json` validate thành công — `python validate_golden_dataset.py` → **PASS**, 20 QA, easy=5 / medium=7 / hard=5 / adversarial=3, 10/10 documents.
+- [x] Exercise 3.1 hoàn thành trong file JSON và bảng kết quả phía trên.
+- [x] Exercise 3.2 có năm metrics, aggregate report và ba cases thấp nhất (pass rate 45.0%, recall 0.888, precision 0.915).
+- [x] Exercise 3.3 có rubric 1–5 và bias controls (position / verbosity / self-preference + calibration).
+- [x] `reflection.md` có ba failure analyses (A01, M02, E01) và regression strategy.
+- [x] Đã copy `template.py` thành `solution/solution.py` — hai file giống nhau.
+- [x] Exercise 3.4 và 3.5 đã làm (bonus +10).
+
+### Ghi chú về môi trường chạy
+
+Bài này chạy với **model local** qua LM Studio thay vì OpenAI cloud:
+
+```dotenv
+OPENAI_API_KEY=<LM Studio API token — gitignored, không nằm trong repo>
+OPENAI_BASE_URL=http://127.0.0.1:1234/v1
+OPENAI_MODEL=ternary-bonsai-8b
+```
+
+`OPENAI_BASE_URL` **không** có trong `.env.example` nhưng là bắt buộc: `domain_assistant.py`
+không truyền `base_url` khi khởi tạo `OpenAI()` client, nên biến môi trường là cách duy
+nhất trỏ client về server local. Cần đúng dạng có `/v1` — dạng `http://127.0.0.1:1234`
+(hợp lệ về mặt kỹ thuật ở endpoint `/responses`) **không** hoạt động với OpenAI SDK:
+nó trả về `TypeError: 'NoneType' object is not iterable` khi SDK parse response.
+
+Vì chạy local nên **không tốn quota API**, và kết quả có tính xác định (temperature = 0):
+cùng đầu vào cho cùng kết quả, thuận tiện cho `run_regression()`.
