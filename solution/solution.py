@@ -683,8 +683,11 @@ class FailureAnalyzer:
             dict mapping failure_type → count.
             Example: {"hallucination": 3, "irrelevant": 2, "incomplete": 5}
         """
-        # TODO
-        raise NotImplementedError("Implement categorize_failures")
+        counts: dict[str, int] = {}
+        for failure in failures:
+            key = failure.failure_type or "unknown"
+            counts[key] = counts.get(key, 0) + 1
+        return counts
 
     def find_root_cause(self, failure: EvalResult) -> str:
         """
@@ -696,8 +699,25 @@ class FailureAnalyzer:
             "Answer is missing key information — increase context window or improve generation"
             "Multiple issues detected — review full pipeline"
         """
-        # TODO: compare faithfulness, relevance, completeness, return appropriate string
-        raise NotImplementedError("Implement find_root_cause")
+        scores = {
+            "faithfulness": failure.faithfulness,
+            "relevance": failure.relevance,
+            "completeness": failure.completeness,
+        }
+        if not scores:
+            return "Multiple issues detected — review full pipeline"
+        lowest = min(scores.values())
+        weak = [name for name, value in scores.items() if value == lowest]
+        if "faithfulness" in weak:
+            return "Context is missing or irrelevant — improve retrieval"
+        if "relevance" in weak:
+            return "Answer does not address the question — improve prompt clarity"
+        if "completeness" in weak:
+            return (
+                "Answer is missing key information — increase context window "
+                "or improve generation"
+            )
+        return "Multiple issues detected — review full pipeline"
 
     def generate_improvement_log(self, failures: list, suggestions: list[str]) -> str:
         """Generate a Markdown table logging failures and improvement actions.
@@ -716,7 +736,24 @@ class FailureAnalyzer:
 
         TODO: Build markdown table with failure details + matched suggestions
         """
-        raise NotImplementedError
+        header = (
+            "| Failure ID | Type | Root Cause | Suggested Fix | Status |\n"
+            "|------------|------|------------|---------------|--------|\n"
+        )
+        rows: list[str] = []
+        for index, failure in enumerate(failures):
+            # suggestions may be shorter than failures, so guard the index.
+            fix = (
+                suggestions[index]
+                if index < len(suggestions)
+                else "Investigate with a manual trace review"
+            )
+            failure_id = failure.qa_pair.metadata.get("id") or f"F{index + 1:03d}"
+            rows.append(
+                f"| {failure_id} | {failure.failure_type} | "
+                f"{self.find_root_cause(failure)} | {fix} | Open |"
+            )
+        return header + "\n".join(rows)
 
     def generate_improvement_suggestions(
         self, failures: list[EvalResult]
@@ -734,8 +771,43 @@ class FailureAnalyzer:
         Returns:
             List of at least 3 suggestion strings (or fewer if failures is empty).
         """
-        # TODO: analyze categorized failures and return suggestions
-        raise NotImplementedError("Implement generate_improvement_suggestions")
+        if not failures:
+            return []
+        categories = self.categorize_failures(failures)
+        suggestions: list[str] = []
+        if categories.get("hallucination", 0):
+            suggestions.append(
+                "Add a grounded-claim check: reject any sentence whose content "
+                "words are absent from the retrieved chunks"
+            )
+        if categories.get("irrelevant", 0):
+            suggestions.append(
+                "Rewrite the answer prompt to restate the question and forbid "
+                "generic preambles so the answer addresses the actual intent"
+            )
+        if categories.get("incomplete", 0):
+            suggestions.append(
+                "Add few-shot examples that keep every date, amount, condition "
+                "and exception from the retrieved evidence"
+            )
+        if categories.get("off_topic", 0):
+            suggestions.append(
+                "Add an intent gate that verifies the question matches the "
+                "assistant's OrbitTech scope before answering"
+            )
+        if categories.get("unknown", 0):
+            suggestions.append(
+                "Reproduce the failing trace manually and assign an explicit "
+                "failure_type before proposing a fix"
+            )
+        # The contract promises at least three suggestions, so pad with the
+        # generic retrieval action rather than returning a short list.
+        while len(suggestions) < 3:
+            suggestions.append(
+                "Increase retrieval top_k and re-measure context recall to confirm "
+                "the evidence needed by the answer is actually retrieved"
+            )
+        return suggestions
 
 
 # ---------------------------------------------------------------------------
