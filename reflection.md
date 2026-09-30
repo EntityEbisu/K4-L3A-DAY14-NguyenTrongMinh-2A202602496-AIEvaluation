@@ -5,10 +5,36 @@
 Dùng kết quả thật trong `artifacts/benchmark_results.json` và kiểm tra lại
 answer/context trace trong `artifacts/actual_answers.json` trước khi kết luận.
 
-**Hệ thống được đánh giá:** `domain_assistant.py` (BM25 + `ternary-bonsai-8b` qua
-LM Studio tại `http://127.0.0.1:1234/v1`, top_k = 5, temperature = 0).
+**Hệ thống được đánh giá:** `domain_assistant.py` — BM25 retrieval + generator là
+**model local `ternary-bonsai-8b` (8B) chạy qua LM Studio** tại
+`http://127.0.0.1:1234/v1`, top_k = 5, temperature = 0.
 **Engine đánh giá:** `template.py` / `solution/solution.py` (word-overlap RAGAS heuristics).
 **Số liệu:** 20 câu, 1 lần chạy, 2026-09-30.
+
+> ⚠️ **Caveat về mô hình sinh câu trả lời — đọc trước khi diễn giải số liệu.** Bài lab
+> mặc định dùng OpenAI cloud với `gpt-4o-mini` (xem `.env.example`). Bài này chạy
+> **khác**: dùng API OpenAI-compatible của **LM Studio trên localhost** với model
+> **`ternary-bonsai-8b`** — một model **8B chạy local**, nhỏ hơn đáng kể so với model
+> frontier mà bài giảng giả định. Hệ quả trực tiếp cho toàn bộ báo cáo này:
+> - **Điểm thấp một phần là do giới hạn model, không chỉ do thiết kế pipeline.** Ở mức
+>   8B, các lỗi như bỏ sót điều kiện (completeness 0.506) và chọn nhầm phiên bản
+>   chính sách (H01/A03) là lỗi *sức chứa theo kích thước model* — một model lớn hơn
+>   nhiều khả năng xử lý đúng hơn. Vì vậy **không** kết luận rằng pipeline RAG này chỉ
+>   đạt 45% là giới hạn của kiến trúc.
+> - **Hai metric retrieval (0.888 / 0.915) không bị ảnh hưởng bởi model** — chúng
+>   đo retriever và bằng chứng, không đo mô hình sinh câu trả lời. Vì vậy kết luận ở
+>   §1 rằng **retrieval không phải nút thắt** vẫn giữ nguyên và chắc chắn hơn: nó không
+>   phụ thuộc vào việc dùng model nào.
+> - **Ngược lại, mọi phê bình hướng về "prompt/model" ở §2 và §7 phải được đọc với
+>   tiêu chí này**: phần lớn lỗi generation có thể thuộc về giới hạn 8B chứ không phải
+>   prompt. Đây là lý do §7 kết luận bằng đề xuất dùng LLM-judge mạnh hơn thay vì
+>   chỉ sửa prompt.
+> - Chạy local nên **không tốn quota API** và là **xác định** (temperature = 0): cùng
+>   đầu vào cho cùng kết quả, thuận tiện cho `run_regression()`.
+>
+> Nói rõ ở đây vì `RUBRIC.md` §1 yêu cầu bằng chứng hợp lệ: nếu không nêu loại model,
+> người đọc sẽ mặc định so kết quả này với một model frontier và hiểu sai nguyên nhân
+> của các failure.
 
 ---
 
@@ -57,6 +83,13 @@ Dùng ít nhất hai metrics để bảo vệ kết luận:
    vị trí 1 với BM25 score cao. Case cực điển E01: `00_system_scope.md` được lấy
    ở vị trí 1 (score **9.053**, cao nhất toàn bộ lần chạy), `context_recall = 1.000`
    — bằng chứng **đã có trong context** mà câu trả lời vẫn chỉ đạt faithfulness 0.258.
+
+> **Phạm vi của kết luận này:** vì hai metric retrieval đo retriever chứ không đo mô
+> hình sinh câu trả lời, kết luận "retrieval không phải nút thắt" **độc lập với model**
+> và giữ nguyên dù đổi sang model lớn hơn. Ngược lại, việc *mức thấp cụ thể là bao
+> nhiêu* (relevance 0.561, completeness 0.506) chịu ảnh hưởng mạnh của việc generator là
+> model **8B chạy local** thay vì model cloud — xem caveat ở đầu file và §7.0. Ở mức
+> 8B, không nên kết luận rằng pipeline này bị giới hạn ở 45%.
 
 Hai metric còn lại phục vụ chẩn đoán cụ thể:
 
@@ -509,6 +542,46 @@ Evaluate → Analyze → Improve → Augment benchmark → Repeat
 ---
 
 ## 7. Final Reflection
+
+### 7.0. Điều kiện thí nghiệm: model nào thực sự sinh câu trả lời?
+
+> **Câu trả lời ngắn:** `ternary-bonsai-8b` — một model **8B chạy hoàn toàn trên máy
+> local** qua LM Studio (`http://127.0.0.1:1234/v1`), không phải OpenAI cloud. Model này
+> nhỏ hơn đáng kể so với `gpt-4o-mini` mà `.env.example` của lab mặc định.
+>
+> Tôi nêu điều này ở đầu báo cáo nhưng nhắc lại ở đây vì nó thay đổi cách đọc **mọi
+> con số** trong `reflection.md`. Cần tách bạch hai loại kết luận:
+>
+> **Kết luận độc lập với model** (giữ nguyên giá trị, và chính vì vậy đáng tin hơn):
+> - Context Recall 0.888 và Context Precision 0.915 — hai metric này đo **retriever và
+>   bằng chứng**, không đo mô hình sinh câu trả lời. Kết luận "retrieval không phải nút
+>   thắt" vẫn đúng dù đổi sang bất kỳ model nào.
+> - Phê bình về metric: E01 bị trừ điểm vì `evaluate_faithfulness` lấy mẫu số là số
+>   từ của answer, và A01 bị phạt vì từ chối đúng. Đây là lỗi của **công thức đo**,
+>   không liên quan đến model nào sinh câu trả lời.
+> - Mọi phân tích trace (chunk nào bị thiếu, chunk nào đứng đầu) là dữ liệu thô của
+>   retriever.
+>
+> **Kết luận phụ thuộc model** (phải đọc với tiêu chí 8B):
+> - Pass rate 45%, relevance 0.561, completeness 0.506. Ở mức 8B, bỏ sót điều kiện và
+>   chọn nhầm phiên bản chính sách (H01/A03) là lỗi **sức chứa theo kích thước model**,
+>   không nhất thiết là lỗi thiết kế prompt hay kiến trúc RAG. Một model lớn hơn nhiều
+>   khả năng trả lời đúng mà không cần đổi một dòng prompt nào.
+> - Vì vậy, tôi **không** kết luận "pipeline này chỉ đạt được 45%". Kết luận đúng phải
+>   là: "ở mức model 8B chạy local, điểm yếu nằm ở tầng generation chứ không ở
+>   retrieval" — và đó cũng chính là lý do bài này dùng `RUBRIC.md` nói benchmark
+>   score không quyết định điểm lab.
+>
+> **Vì sao vẫn dùng model local:** nó chạy hoàn toàn offline, **không tốn quota API**,
+> và là xác định (temperature = 0: cùng đầu vào → cùng kết quả), nên `run_regression()`
+> so sánh được đáng tin. Đánh đổi là chất lượng generation thấp hơn model cloud. Đây là
+> lựa chọn có ý thức, không phải hạn chế phát sinh.
+>
+> **Thử nghiệm tiếp theo nên làm:** chạy lại đúng dataset này trên một model lớn hơn
+> (ví dụ `gpt-4o-mini` như `.env.example` dự định) và so sánh. Nếu completeness và
+> relevance tăng rõ rệt trong khi context recall/precision giữ nguyên, thì đó là bằng
+> chứng trực tiếp rằng phần lớn failure ở đây là **giới hạn model**, không phải lỗi
+> thiết kế — và đó là phép so sánh có giá trị nhất mà người đọc có thể tự kiểm chứng.
 
 **Điều gì trong kết quả benchmark trái với dự đoán ban đầu của bạn?**
 
