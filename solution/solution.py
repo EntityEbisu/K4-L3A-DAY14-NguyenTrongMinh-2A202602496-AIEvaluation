@@ -25,6 +25,7 @@ The reranking helper is an optional bonus exercise and may remain unimplemented.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -369,8 +370,7 @@ class LLMJudge:
     """
 
     def __init__(self, judge_llm_fn: Callable[[str], str]) -> None:
-        # TODO: store judge_llm_fn
-        pass
+        self.judge_llm_fn = judge_llm_fn
 
     def score_response(
         self,
@@ -402,8 +402,32 @@ class LLMJudge:
                 "reasoning": str,               # raw LLM explanation
             }
         """
-        # TODO
-        raise NotImplementedError("Implement score_response")
+        criteria = "\n".join(f"- {name}: {desc}" for name, desc in rubric.items())
+        prompt = (
+            "You are an impartial evaluator for OrbitTech customer support.\n"
+            "Score the assistant answer from 0.0 to 1.0 for each criterion.\n"
+            "Respond with JSON only: "
+            '{"scores": {"<criterion>": <float>}, "reasoning": "<short>"}\n\n'
+            f"Question:\n{question}\n\n"
+            f"Answer to score:\n{answer}\n\n"
+            f"Rubric criteria:\n{criteria}\n"
+        )
+        raw = self.judge_llm_fn(prompt)
+        try:
+            parsed = json.loads(raw)
+            scores = parsed["scores"]
+            if not isinstance(scores, dict):
+                raise TypeError("scores must be an object")
+            return {
+                "scores": {
+                    name: max(0.0, min(1.0, float(value)))
+                    for name, value in scores.items()
+                },
+                "reasoning": str(parsed.get("reasoning", "")),
+            }
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            # Unparsable judge output: fall back to a neutral 0.5 per criterion.
+            return {"scores": {name: 0.5 for name in rubric}, "reasoning": raw}
 
     def detect_bias(self, scores_batch: list[dict[str, Any]]) -> dict[str, Any]:
         """
@@ -424,8 +448,32 @@ class LLMJudge:
                 "severity_bias":   bool,
             }
         """
-        # TODO
-        raise NotImplementedError("Implement detect_bias")
+        if not scores_batch:
+            return {
+                "positional_bias": False,
+                "leniency_bias": False,
+                "severity_bias": False,
+            }
+        flattened: list[float] = []
+        for record in scores_batch:
+            flattened.extend(record.get("scores", {}).values())
+        average = sum(flattened) / len(flattened) if flattened else 0.0
+        return {
+            "positional_bias": self._positional_bias(
+                [record.get("scores", {}) for record in scores_batch]
+            ),
+            "leniency_bias": average > 0.8,
+            "severity_bias": average < 0.3,
+        }
+
+    @staticmethod
+    def _positional_bias(batch: list[dict[str, float]]) -> bool:
+        """True when the first-position answer scores materially above the second."""
+        if len(batch) < 2 or not batch[0] or not batch[1]:
+            return False
+        first = sum(batch[0].values()) / len(batch[0])
+        second = sum(batch[1].values()) / len(batch[1])
+        return first - second > 0.2
 
 
 # ---------------------------------------------------------------------------
